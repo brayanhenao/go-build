@@ -3,6 +3,7 @@ package gobuild_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -172,6 +173,50 @@ func testBuild(t *testing.T, context spec.G, it spec.S) {
 		Expect(logs.String()).To(ContainSubstring("web: path/some-start-command"))
 		Expect(logs.String()).To(ContainSubstring("some-start-command: path/some-start-command"))
 		Expect(logs.String()).To(ContainSubstring("another-start-command: path/another-start-command"))
+	})
+
+	context("BP_LIVE_RELOAD_ENABLED=true in the build environment", func() {
+		it.Before(func() {
+			os.Setenv("BP_LIVE_RELOAD_ENABLED", "true")
+		})
+
+		it.After(func() {
+			os.Unsetenv("BP_LIVE_RELOAD_ENABLED")
+		})
+
+		it("wraps the target process(es) in watchexec", func() {
+			result, err := build(packit.BuildContext{
+				WorkingDir: workingDir,
+				CNBPath:    cnbDir,
+				Stack:      "some-stack",
+				BuildpackInfo: packit.BuildpackInfo{
+					Name:    "Some Buildpack",
+					Version: "some-version",
+				},
+				Layers: packit.Layers{Path: layersDir},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result.Launch).To(Equal(packit.LaunchMetadata{
+				Processes: []packit.Process{
+					{
+						Type:    "web",
+						Command: fmt.Sprintf("watchexec --restart --watch %s --watch %s 'path/some-start-command'", workingDir, filepath.Join(layersDir, "targets", "bin")),
+						Direct:  false,
+					},
+					{
+						Type:    "some-start-command",
+						Command: fmt.Sprintf("watchexec --restart --watch %s --watch %s 'path/some-start-command'", workingDir, filepath.Join(layersDir, "targets", "bin")),
+						Direct:  false,
+					},
+					{
+						Type:    "another-start-command",
+						Command: fmt.Sprintf("watchexec --restart --watch %s --watch %s 'path/another-start-command'", workingDir, filepath.Join(layersDir, "targets", "bin")),
+						Direct:  false,
+					},
+				},
+			}))
+		})
 	})
 
 	context("when the stack is tiny", func() {
@@ -359,6 +404,28 @@ func testBuild(t *testing.T, context spec.G, it spec.S) {
 					Layers: packit.Layers{Path: layersDir},
 				})
 				Expect(err).To(MatchError("failed to remove source"))
+			})
+		})
+		context("when BP_LIVE_RELOAD_ENABLED value is invalid", func() {
+			it.Before(func() {
+				os.Setenv("BP_LIVE_RELOAD_ENABLED", "not-a-bool")
+			})
+
+			it.After(func() {
+				os.Unsetenv("BP_LIVE_RELOAD_ENABLED")
+			})
+			it("returns an error", func() {
+				_, err := build(packit.BuildContext{
+					WorkingDir: workingDir,
+					CNBPath:    cnbDir,
+					Stack:      "some-stack",
+					BuildpackInfo: packit.BuildpackInfo{
+						Name:    "Some Buildpack",
+						Version: "some-version",
+					},
+					Layers: packit.Layers{Path: layersDir},
+				})
+				Expect(err).To(MatchError(ContainSubstring("failed to parse BP_LIVE_RELOAD_ENABLED value not-a-bool")))
 			})
 		})
 	})

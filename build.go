@@ -1,6 +1,7 @@
 package gobuild
 
 import (
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -63,9 +64,10 @@ func Build(
 			return packit.BuildResult{}, err
 		}
 
+		buildOutputPath := filepath.Join(targetsLayer.Path, "bin")
 		binaries, err := buildProcess.Execute(GoBuildConfiguration{
 			Workspace: path,
-			Output:    filepath.Join(targetsLayer.Path, "bin"),
+			Output:    buildOutputPath,
 			GoPath:    goPath,
 			GoCache:   goCacheLayer.Path,
 			Flags:     configuration.Flags,
@@ -89,10 +91,15 @@ func Build(
 			return packit.BuildResult{}, err
 		}
 
+		shouldReload, err := checkLiveReloadEnabled()
+		if err != nil {
+			return packit.BuildResult{}, err
+		}
+
 		processes := []packit.Process{
 			{
 				Type:    "web",
-				Command: binaries[0],
+				Command: createStartCommand(binaries[0], context, buildOutputPath, shouldReload),
 				Direct:  context.Stack == TinyStackName,
 			},
 		}
@@ -100,7 +107,7 @@ func Build(
 		for _, binary := range binaries {
 			processes = append(processes, packit.Process{
 				Type:    filepath.Base(binary),
-				Command: binary,
+				Command: createStartCommand(binary, context, buildOutputPath, shouldReload),
 				Direct:  context.Stack == TinyStackName,
 			})
 		}
@@ -114,4 +121,11 @@ func Build(
 			},
 		}, nil
 	}
+}
+
+func createStartCommand(binaryName string, context packit.BuildContext, binaryLocation string, shouldEnableLiveReload bool) string {
+	if shouldEnableLiveReload {
+		return fmt.Sprintf("watchexec --restart --watch %s --watch %s '%s'", context.WorkingDir, binaryLocation, binaryName)
+	}
+	return binaryName
 }
