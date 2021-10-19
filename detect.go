@@ -11,18 +11,32 @@ type ConfigurationParser interface {
 
 func Detect(parser ConfigurationParser) packit.DetectFunc {
 	return func(context packit.DetectContext) (packit.DetectResult, error) {
-		if _, err := parser.Parse(context.BuildpackInfo.Version, context.WorkingDir); err != nil {
+		buildConfiguration, err := parser.Parse(context.BuildpackInfo.Version, context.WorkingDir)
+		if err != nil {
 			return packit.DetectResult{}, packit.Fail.WithMessage("failed to parse build configuration: %w", err)
+		}
+
+		requirements := []packit.BuildPlanRequirement{
+			{
+				Name: "go",
+				Metadata: map[string]interface{}{
+					"build": true,
+				},
+			},
+		}
+
+		if buildConfiguration.GenerateBOM {
+			requirements = append(requirements, packit.BuildPlanRequirement{
+				Name: "cyclonedx-gomod",
+				Metadata: map[string]interface{}{
+					"build": true,
+				},
+			})
 		}
 
 		return packit.DetectResult{
 			Plan: packit.BuildPlan{
-				Requires: []packit.BuildPlanRequirement{{
-					Name: "go",
-					Metadata: map[string]interface{}{
-						"build": true,
-					},
-				}},
+				Requires: requirements,
 			},
 		}, nil
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mattn/go-shellwords"
@@ -22,9 +23,10 @@ type BuildpackYMLParser interface {
 }
 
 type BuildConfiguration struct {
-	Targets    []string
-	Flags      []string
-	ImportPath string
+	Targets     []string
+	Flags       []string
+	ImportPath  string
+	GenerateBOM bool
 }
 
 type BuildConfigurationParser struct {
@@ -79,7 +81,47 @@ func (p BuildConfigurationParser) Parse(buildpackVersion, workingDir string) (Bu
 		buildConfiguration.ImportPath = val
 	}
 
+	// BP_DISABLE_MODULE_BOM=false is equivalent to not setting it at all
+	// Only if we set BP_DISABLE_MODULE_BOM=true do we skip the generation
+	skipBomGeneration := false
+	if value, valProvided := os.LookupEnv("BP_DISABLE_MODULE_BOM"); valProvided {
+		skipBomGeneration, err = strconv.ParseBool(value)
+		if err != nil {
+			return BuildConfiguration{}, err
+		}
+	}
+
+	validGoModFile, err := validateGoModFile(workingDir)
+	if err != nil {
+		return BuildConfiguration{}, err
+	}
+
+	buildConfiguration.GenerateBOM = !skipBomGeneration && validGoModFile
+
+	// if we just check for go.mod file, then we know we are in the go.mod order group and hence the
+	// cyclone-gomod buildpack is always required.
+	// If we do this in detect then we need a separate way of parsing env vars during build to allow skipping BOM generation
+	// If we also parse env vars here, then it might be skipped in the go.mod order group and hence
+	// the cyclonedx-gomod buildpack must be listed as optional
+	// This allows us to have the same logic in both detect and build
+
+	// check for BP_DISABLE_MODULE_BOM env var and if we are not skipping,
+	// then check for presence of go.mod file
+
 	return buildConfiguration, nil
+}
+
+func validateGoModFile(workingDir string) (bool, error) {
+	_, err := os.Stat(filepath.Join(workingDir, "go.mod"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		} else {
+			return false, err
+		}
+	}
+
+	return true, nil
 }
 
 func containsFlag(flags []string, match string) bool {
