@@ -28,6 +28,7 @@ func main() {
 			),
 			fs.NewChecksumCalculator(),
 			gobuild.NewGoPathManager(os.TempDir()),
+			gobuild.NewModuleBOM(pexec.NewExecutable("cyclonedx-gomod"), scribe.NewEmitter(os.Stdout)),
 			chronos.DefaultClock,
 			emitter,
 			gobuild.NewSourceDeleter(),

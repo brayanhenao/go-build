@@ -30,11 +30,17 @@ type SourceRemover interface {
 	Clear(path string) error
 }
 
+//go:generate faux --interface GoModBOM --output fakes/go_mod_bom.go
+type GoModBOM interface {
+	Generate(workingDir, target string) ([]packit.BOMEntry, error)
+}
+
 func Build(
 	parser ConfigurationParser,
 	buildProcess BuildProcess,
 	checksumCalculator ChecksumCalculator,
 	pathManager PathManager,
+	goModBOM GoModBOM,
 	clock chronos.Clock,
 	logs scribe.Emitter,
 	sourceRemover SourceRemover,
@@ -80,6 +86,27 @@ func Build(
 			return packit.BuildResult{}, err
 		}
 
+		var moduleBOM []packit.BOMEntry
+		if configuration.GenerateBOM {
+			for _, target := range configuration.Targets {
+				logs.Process("Running BOM generation")
+
+				var currentModuleBOM []packit.BOMEntry
+				duration, err := clock.Measure(func() error {
+					currentModuleBOM, err = goModBOM.Generate(context.WorkingDir, target)
+					return err
+				})
+				if err != nil {
+					return packit.BuildResult{}, err
+				}
+
+				moduleBOM = append(moduleBOM, currentModuleBOM...)
+				logs.Action("Completed in %s", duration.Round(time.Millisecond))
+			}
+
+			logs.Break()
+		}
+
 		sum, err := checksumCalculator.Sum(targetsLayer.Path)
 		if err != nil {
 			return packit.BuildResult{}, err
@@ -123,8 +150,12 @@ func Build(
 
 		return packit.BuildResult{
 			Layers: []packit.Layer{targetsLayer, goCacheLayer},
+			Build: packit.BuildMetadata{
+				BOM: moduleBOM,
+			},
 			Launch: packit.LaunchMetadata{
 				Processes: processes,
+				BOM:       moduleBOM,
 			},
 		}, nil
 	}
